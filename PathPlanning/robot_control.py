@@ -23,19 +23,6 @@ class Robot():
     # ALL COMMANDS ONLY ADD MOVEMENT TO BUFFER, BUT STILL AFFECT ROBOT POSITION VALUES BEFORE BUFFER IS SENT / MOVEMENT IS MADE. 
     # send_buffer() MUST BE USED FOR COMMAND TO BE SENT TO ROBOT
     # THIS MEANS Robot.position DOES NOT REFLECT ACTUAL POSITION OF ROBOT, THIS NEEDS TO BE DERIVED FROM COMPUTER VISION.
-    
-    # Robot.position is the hypothetical position of the robot after all buffered moves are executed
-
-    # BYTE ARRAY FORMAT
-    # First byte -> command (1 = move, 2 = turn)
-    # 
-    # Moving
-    # - Second/third byte -> distance 
-    #    (float distance in terms of squares or integer # of encoder counts?)
-    #
-    # Turning
-    # - Second/third byte -> angle (in degrees) (signed int)
-    # - need 2 bytes because 180 > 128 and negative values being used
 
     def send_buffer(self):
         if self.server:
@@ -49,9 +36,6 @@ class Robot():
         self.buffer += command
     
     def turn(self, angle):
-        # 1 = clockwise, 0 = counterclockwise
-        # positive angle is counterclockwise, negative is clockwise
-        # Negative numbers are represented with two's complement, to be interpreted by arduino
         if angle == 0:
             return
         
@@ -72,19 +56,39 @@ class Robot():
         
         self.turn(turn_angle)
 
-    def move_to(self, position):
-        if self.position[0] == position[0]:
-            angle = 90 if position[1] > self.position[1] else -90
-        else:
-            angle = math.degrees(math.atan((position[1] - self.position[1]) / (position[0] - self.position[0])))
+    # NEW: Send Holonomic movement vector to Pico
+    def move_holonomic(self, angle, distance):
+        # Calculate encoder counts
+        encoder_counts = distance * COUNTS_PER_SQUARE / 100
+        
+        # Ensure angle is positive 0-360
+        command_angle = int(angle % 360)
+        
+        # Command format: [5, angle_high_byte, angle_low_byte, distance_scaled_byte]
+        angle_bytes = command_angle.to_bytes(2, byteorder="big")
+        dist_byte = bytearray([min(255, int(encoder_counts / 100))])
+        
+        command = bytearray([5]) + bytearray(angle_bytes) + dist_byte
+        print(f"Holonomic Command: {command}")
+        self.buffer += command
 
-        if position[0] < self.position[0]:
-            angle += 180
-        self.turn_to(angle)
-        self.move(math.dist(self.position, position))
+    # UPDATED: Directs the robot without physical rotation
+    def move_to(self, position):
+        dx = position[0] - self.position[0]
+        dy = position[1] - self.position[1]
+        
+        distance = math.dist(self.position, position)
+        
+        # Determine angle based on X/Y difference 
+        move_angle = math.degrees(math.atan2(dy, dx))
+        
+        # No longer turning! Just gliding omnidirectionally
+        self.move_holonomic(move_angle, distance)
+        
         self.position = position
 
     def face_forward(self):
+        # Still useful if the robot gets bumped or you want to add a spin attack later
         self.turn_to(self.initial_angle)
 
     def execute_path(self, path_points):
@@ -92,9 +96,7 @@ class Robot():
         for point in path_points:
             self.move_to(point)
             print(self.position)
-            print(self.angle)
             print(f"Moved to {point}")
-        self.face_forward()
+        
         print(self.position)
-        print(self.angle)
         print("Finished Path")
